@@ -1,4 +1,4 @@
-# California House Price Predictor 🏠
+# House Price Predictor 🏠
 
 An interactive web application built with **Flask** and **Machine Learning** to visualize housing data across California and predict house prices based on various features.
 
