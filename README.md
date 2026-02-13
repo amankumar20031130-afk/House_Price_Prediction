@@ -64,13 +64,20 @@ An interactive web application built with **Flask** and **Machine Learning** to 
 
 This project is configured for easy deployment on **Render** or **Heroku**.
 
-### Render Setup:
+### Render Setup (Recommended):
 1. Connect your GitHub repository to Render.
 2. Select **Web Service**.
 3. Use the following settings:
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `gunicorn app:app`
 4. The app will automatically use the `Procfile` configuration.
+
+### Vercel Setup:
+1. Install Vercel CLI: `npm install -g vercel`
+2. Run `vercel` in the project root.
+3. Vercel will use the `vercel.json` file to route all requests to the Flask app.
+4. **⚠️ Warning**: Vercel has a **250MB limit** for serverless functions. Since `model.pkl` is 144MB, adding heavy libraries like `pandas` and `scikit-learn` might exceed this limit during deployment. If it fails, **Render** is a better alternative as it has a much larger limit.
+
 
 ## ⚠️ Important Note
 The `model.pkl` file is excluded from standard Git tracking if it exceeds 100MB. To deploy it, ensure you have **Git LFS** installed, or host the model file externally.
