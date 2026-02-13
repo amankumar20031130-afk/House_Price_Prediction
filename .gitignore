@@ -1,0 +1,10 @@
+model.pkl
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+.vscode/
+.idea/
+*.log

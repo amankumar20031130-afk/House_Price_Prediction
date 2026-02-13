@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>House Price-Prediction</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: #f4f7fb; color: #1f2d3d; }
+    .wrap { display:flex; gap:18px; padding:18px; height:100vh; box-sizing:border-box; }
+    .mapCard { flex:1; background:white; border-radius:12px; padding:12px; box-shadow:0 6px 20px rgba(0,0,0,0.06); display:flex; flex-direction:column; }
+    .mapCanvas { flex:1; border-radius:8px; background: linear-gradient(#e9f3ff,#ffffff); position:relative; overflow:hidden; }
+    #canvas { width:100%; height:100%; display:block; }
+    .side { width:420px; background:white; border-radius:12px; padding:18px; box-shadow:0 6px 20px rgba(0,0,0,0.06); overflow:auto; }
+    label { font-weight:600; margin-top:8px; display:block; font-size:13px; color:#243042; }
+    input, select { width:100%; padding:10px 12px; border-radius:8px; border:1px solid #e6eef9; margin-top:6px; box-sizing:border-box; font-size:14px; background:#fbfdff; }
+    input[readonly]{ background:#f3f6fb; }
+    button { margin-top:12px; width:100%; padding:12px; border-radius:10px; border:none; background:#0066ff; color:white; font-weight:700; cursor:pointer; }
+    .info { margin-top:10px; font-size:13px; color:#556c86; }
+    .tooltip { position:absolute; pointer-events:none; background:rgba(0,0,0,0.75); color:white; padding:6px 8px; border-radius:6px; font-size:12px; transform:translate(-50%,-120%); display:none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="mapCard">
+      <h3 style="margin:6px 0 12px 0;">Dataset Map (click to select nearest point)</h3>
+      <div class="mapCanvas">
+        <canvas id="canvas"></canvas>
+        <div id="tooltip" class="tooltip"></div>
+      </div>
+      <div class="info">Points plotted are sampled from your <code>housing.csv</code>. Click any point or click anywhere to pick the nearest row.</div>
+    </div>
+
+    <div class="side">
+      <h3 style="margin:0 0 10px 0;">Selected House</h3>
+
+      <label>Longitude</label>
+      <input id="longitude" readonly />
+
+      <label>Latitude</label>
+      <input id="latitude" readonly />
+
+      <label>Housing Median Age</label>
+      <input id="housing_median_age" />
+
+      <label>Total Rooms</label>
+      <input id="total_rooms" />
+
+      <label>Total Bedrooms</label>
+      <input id="total_bedrooms" />
+
+      <label>Population</label>
+      <input id="population" />
+
+      <label>Households</label>
+      <input id="households" />
+
+      <label>Median Income</label>
+      <input id="median_income" />
+
+      <label>Ocean Proximity</label>
+      <select id="ocean_proximity">
+        <option>INLAND</option>
+        <option>NEAR BAY</option>
+        <option>NEAR OCEAN</option>
+        <option>ISLAND</option>
+        <option>1H OCEAN</option>
+      </select>
+
+      <label style="margin-top:10px">True (dataset) price</label>
+      <input id="true_price" readonly />
+
+      <button id="predictBtn">Predict Price (model)</button>
+      <div id="predicted" class="info" style="font-weight:800; margin-top:10px;"></div>
+    </div>
+  </div>
+
+<script>
+(async function(){
+  // load dataset points
+  const resp = await fetch('/static/mapdata.json');
+  const points = await resp.json(); // array of objects from CSV
+
+  // canvas setup
+  const canvas = document.getElementById('canvas');
+  const tooltip = document.getElementById('tooltip');
+  function resizeCanvas(){
+    canvas.width = canvas.clientWidth * devicePixelRatio;
+    canvas.height = canvas.clientHeight * devicePixelRatio;
+    ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+    draw();
+  }
+  const ctx = canvas.getContext('2d');
+
+  // compute bounds from dataset
+  let lons = points.map(p => Number(p.longitude));
+  let lats = points.map(p => Number(p.latitude));
+  const lonMin = Math.min(...lons), lonMax = Math.max(...lons);
+  const latMin = Math.min(...lats), latMax = Math.max(...lats);
+
+  // add small padding
+  const padFactor = 0.05;
+  const lonPad = (lonMax - lonMin) * padFactor;
+  const latPad = (latMax - latMin) * padFactor;
+  const lonA = lonMin - lonPad, lonB = lonMax + lonPad;
+  const latA = latMin - latPad, latB = latMax + latPad;
+
+  // mapping functions: lon->x, lat->y (latitude decreases upward on screen)
+  function lonToX(lon){
+    const t = (lon - lonA) / (lonB - lonA);
+    return t * canvas.clientWidth;
+  }
+  function latToY(lat){
+    const t = (latB - lat) / (latB - latA); // invert y so larger lat is top
+    return t * canvas.clientHeight;
+  }
+
+  // precompute screen coords for points for speed
+  const plotPoints = points.map((p, i) => {
+    return {
+      i,
+      lon: Number(p.longitude),
+      lat: Number(p.latitude),
+      x: null,
+      y: null,
+      raw: p
+    };
+  });
+
+  function updateScreenCoords(){
+    plotPoints.forEach(pt => {
+      pt.x = lonToX(pt.lon);
+      pt.y = latToY(pt.lat);
+    });
+  }
+
+  // draw function
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // background grid
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.fillStyle = '#f8fbff';
+    ctx.fillRect(0,0,w,h);
+
+    // small grid lines
+    ctx.strokeStyle = 'rgba(30,50,80,0.04)';
+    ctx.lineWidth = 1;
+    const step = 50;
+    for(let x=0;x<w;x+=step){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+    }
+    for(let y=0;y<h;y+=step){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+
+    // draw points (colored by median_income)
+    plotPoints.forEach(pt => {
+      const inc = Number(pt.raw.median_income);
+      // color scale: low income -> blue, high -> red
+      const t = Math.min(Math.max((inc - 1) / 8, 0), 1);
+      const r = Math.round(80 + 155*t), g = Math.round(150 - 80*t), b = Math.round(220 - 220*t);
+      ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
+
+      // size by population (clamped)
+      const pop = Number(pt.raw.population);
+      const size = Math.max(2, Math.min(6, pop/600));
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, size, 0, Math.PI*2);
+      ctx.fill();
+    });
+  }
+
+  // initialize sizes and coords
+  window.addEventListener('resize', () => { resizeCanvas(); updateScreenCoords(); });
+  // initial sizing
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  resizeCanvas();
+  updateScreenCoords();
+
+  // helper to find nearest point given screen x,y
+  function findNearest(x,y){
+    let minD = Infinity, best = null;
+    for(const pt of plotPoints){
+      const dx = pt.x - x, dy = pt.y - y, d = dx*dx + dy*dy;
+      if (d < minD){ minD = d; best = pt; }
+    }
+    return {best, dist: Math.sqrt(minD)};
+  }
+
+  // mouse move tooltip on hover
+  canvas.addEventListener('mousemove', (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
+    const {best, dist} = findNearest(cx, cy);
+    if (!best) { tooltip.style.display = 'none'; return; }
+    if (dist < 20){ // show tooltip only when near
+      tooltip.style.display = 'block';
+      tooltip.style.left = `${ev.clientX - rect.left}px`;
+      tooltip.style.top = `${ev.clientY - rect.top}px`;
+      // tooltip.innerHTML = `Price: $${Number(best.raw.median_house_value).toLocaleString()}<br>Inc: ${best.raw.median_income}`;
+      tooltip.innerHTML = `Inc: ${best.raw.median_income}`
+    } else {
+      tooltip.style.display = 'none';
+    }
+  });
+
+  // click handler: select nearest point
+  canvas.addEventListener('click', (ev) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = ev.clientX - rect.left, cy = ev.clientY - rect.top;
+    const {best, dist} = findNearest(cx, cy);
+    if (!best) return;
+
+    // highlight selection (draw small halo)
+    draw();
+    ctx.beginPath();
+    ctx.arc(best.x, best.y, 10, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(0,120,255,0.9)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // fill form inputs with this row
+    fillFormFromRow(best.raw);
+
+    // scroll form side into view (nice UX)
+    document.querySelector('.side').scrollTop = 0;
+  });
+
+  function fillFormFromRow(row){
+    // row keys come from CSV -> ensure they match your pipeline keys
+    document.getElementById('longitude').value = row.longitude;
+    document.getElementById('latitude').value = row.latitude;
+    document.getElementById('housing_median_age').value = row.housing_median_age;
+    document.getElementById('total_rooms').value = row.total_rooms;
+    document.getElementById('total_bedrooms').value = row.total_bedrooms;
+    document.getElementById('population').value = row.population;
+    document.getElementById('households').value = row.households;
+    document.getElementById('median_income').value = row.median_income;
+    document.getElementById('ocean_proximity').value = row.ocean_proximity;
+    document.getElementById('true_price').value = row.median_house_value;
+    document.getElementById('predicted').textContent = '';
+  }
+
+  // Predict button
+  document.getElementById('predictBtn').addEventListener('click', async () => {
+    const payload = {
+      longitude: Number(document.getElementById('longitude').value),
+      latitude: Number(document.getElementById('latitude').value),
+      housing_median_age: Number(document.getElementById('housing_median_age').value),
+      total_rooms: Number(document.getElementById('total_rooms').value),
+      total_bedrooms: Number(document.getElementById('total_bedrooms').value),
+      population: Number(document.getElementById('population').value),
+      households: Number(document.getElementById('households').value),
+      median_income: Number(document.getElementById('median_income').value),
+      ocean_proximity: document.getElementById('ocean_proximity').value
+    };
+
+    // minimal validation
+    for (const k of Object.keys(payload)){
+      if (payload[k] === null || payload[k] === '' || Number.isNaN(payload[k])) {
+        alert('Please select a point on the map (fills fields) before predicting.');
+        return;
+      }
+    }
+
+    try {
+      const r = await fetch('/predict', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if (r.ok){
+        document.getElementById('predicted').textContent = `Predicted price: $${Number(j.predicted_price).toFixed(2)}`;
+      } else {
+        alert('Prediction error: ' + (j.error || JSON.stringify(j)));
+      }
+    } catch (err) {
+      alert('Prediction request failed: ' + err.message);
+    }
+  });
+
+  // initial draw and coordinate mapping update
+  function init(){
+    updateScreenCoords();
+    draw();
+  }
+  init();
+
+})();
+</script>
+</body>
+</html>
